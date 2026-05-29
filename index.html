@@ -403,7 +403,8 @@ let lastTime = 0, accumulator = 0;
 let combo = 0, comboTimer = 0;
 let puWide = 0, puSlow = 0, puMulti = false;
 let lvFlash = 0;
-let nextLife = 5000, extraFlash = 0;
+const LIFE_THRESHOLDS = [5000, 15000, 30000, 50000];
+let lifeIdx = 0, extraFlash = 0;
 
 function getScale() { return LW / canvas.getBoundingClientRect().width; }
 
@@ -443,7 +444,7 @@ function togglePause() {
 function startGame() {
   document.getElementById('overlay').classList.add('hidden');
   level = 1; score = 0; lives = 3;
-  nextLife = 5000; extraFlash = 0;
+  lifeIdx = 0; extraFlash = 0;
   puWide = 0; puSlow = 0; puMulti = false;
   combo = 0; comboTimer = 0;
   paused = false;
@@ -526,8 +527,8 @@ function updateUI() {
 function addScore(n) {
   score += n;
   let gained = false;
-  while (score >= nextLife) {
-    nextLife += 5000;
+  while (lifeIdx < LIFE_THRESHOLDS.length && score >= LIFE_THRESHOLDS[lifeIdx]) {
+    lifeIdx++;
     lives++;
     gained = true;
     extraFlash = 90;
