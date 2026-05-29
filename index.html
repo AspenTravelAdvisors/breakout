@@ -385,7 +385,7 @@ const LEVEL_MAPS = [
    '#rrrrrrrrr#']
 ];
 
-function ballSpeed() { return Math.min(4.19 + level * 0.4, 11); }
+function ballSpeed() { return Math.min(5.028 + level * 0.48, 13.2); }
 
 function buildLayout(level) {
   const map     = LEVEL_MAPS[(level - 1) % LEVEL_MAPS.length];
@@ -562,7 +562,7 @@ const DROP_LABELS = { wide: 'W',       slow: 'S',       multi: 'M'       };
 
 function spawnDrop(x, y) {
   const type = DROP_TYPES[Math.floor(Math.random() * DROP_TYPES.length)];
-  drops.push({ x, y, vy: 1.3, type, color: DROP_COLORS[type], label: DROP_LABELS[type], alive: true, t: 0 });
+  drops.push({ x, y, vy: 1.56, type, color: DROP_COLORS[type], label: DROP_LABELS[type], alive: true, t: 0 });
 }
 
 function loop(now) {
