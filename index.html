@@ -582,6 +582,12 @@ const paddleTick = new THREE.Mesh(
 field.add(paddleTick);
 const paddleLight = new THREE.PointLight(0x00f5ff, 22, 130, 2);
 field.add(paddleLight);
+// per-state paddle glow, stepped down one level [ small · normal · wide ]
+const PADDLE_TINT       = [0xff5566, 0x7ff2ff, 0x33ff99];
+const PADDLE_ATTEN      = [0xff5566, 0x16d6ff, 0x33ff99];
+const PADDLE_CORE_GLOW  = [0.55, 0.9, 1.4];   // core emissive: normal now sits at the old small level, wide at the old normal
+const PADDLE_SHELL_GLOW = [0.08, 0.12, 0.16];
+const PADDLE_LIGHT      = [11, 15, 21];
 
 /* ---- ball pool ---- */
 const ballGeo = new THREE.SphereGeometry(3.6, 20, 20);
@@ -1057,9 +1063,12 @@ function render3D() {
   paddleCore.position.set(px, py, PADDLE_Z);
   paddleTick.position.set(px, py, PADDLE_Z);
   paddleLight.position.set(px, ly(paddle.y), 18);
-  const tint = puShrink > 0 ? 0xff5566 : puWide > 0 ? 0x33ff99 : 0x7ff2ff;
-  paddleCoreMat.emissive.set(tint);
-  paddleMat.attenuationColor.set(puShrink > 0 ? 0xff5566 : puWide > 0 ? 0x33ff99 : 0x16d6ff);
+  const st = puShrink > 0 ? 0 : puWide > 0 ? 2 : 1;        // 0 small · 1 normal · 2 wide
+  paddleCoreMat.emissive.set(PADDLE_TINT[st]);
+  paddleCoreMat.emissiveIntensity = PADDLE_CORE_GLOW[st];
+  paddleMat.emissiveIntensity     = PADDLE_SHELL_GLOW[st];
+  paddleLight.intensity           = PADDLE_LIGHT[st];
+  paddleMat.attenuationColor.set(PADDLE_ATTEN[st]);
 
   // bricks
   for (const br of bricks) {
