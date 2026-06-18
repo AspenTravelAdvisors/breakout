@@ -143,6 +143,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 /* ============================================================
    LOGICAL GAME SPACE  (unchanged 2D physics: 480 x 560)
@@ -506,6 +507,25 @@ let floorTex;
   scene.add(new THREE.Points(geo, mat));
 })();
 
+/* ---- slow floating dust motes drifting toward the camera (volumetric depth) ---- */
+let dust;
+(function buildDust() {
+  const N = 170, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i*3]   = (Math.random() - 0.5) * 440;
+    pos[i*3+1] = (Math.random() - 0.5) * 280 + 20;
+    pos[i*3+2] = Math.random() * 300 - 150;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    map: glowTex, color: 0x7fe0ff, size: 3.4, transparent: true, opacity: 0.45,
+    blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
+  });
+  dust = new THREE.Points(geo, mat);
+  scene.add(dust);
+})();
+
 /* ---- distant nebula glow behind the wall, for depth ---- */
 (function buildNebula() {
   const make = (color, x, y, sx, sy, op) => {
@@ -525,14 +545,15 @@ let floorTex;
 const paddleMat = new THREE.MeshStandardMaterial({
   color: 0x06343d, emissive: 0x00c8e0, emissiveIntensity: 0.7, roughness: 0.3, metalness: 0.5
 });
-const paddleGeo = new THREE.BoxGeometry(1, 6, 4);
+const paddleGeo = new RoundedBoxGeometry(1, 6, 4, 4, 0.42);
 const paddleMesh = new THREE.Mesh(paddleGeo, paddleMat);
-// bright outline so the slab's width/edges read clearly
-const paddleEdge = new THREE.LineSegments(
-  new THREE.EdgesGeometry(paddleGeo),
-  new THREE.LineBasicMaterial({ color: 0x9ff4ff })
+// soft glowing top-edge cap so the slab's width still reads clearly on the rounded body
+const paddleCap = new THREE.Mesh(
+  new RoundedBoxGeometry(1, 1.4, 4.4, 3, 0.55),
+  new THREE.MeshStandardMaterial({ color: 0xbfffff, emissive: 0x9ff4ff, emissiveIntensity: 1.4, roughness: 0.25 })
 );
-paddleMesh.add(paddleEdge);
+paddleCap.position.y = 3.0;
+paddleMesh.add(paddleCap);
 field.add(paddleMesh);
 // fixed-width centre marker — shows the dead-centre (straight bounce) spot for judging angle
 const paddleTick = new THREE.Mesh(
@@ -582,7 +603,8 @@ function buildBrickMeshes() {
   clearBricks();
   for (const br of bricks) {
     const w = br.w * SX, h = br.h * SY, d = 8;
-    const geo = new THREE.BoxGeometry(w, h, d);
+    const radius = Math.min(w, h, d) * 0.22;
+    const geo = new RoundedBoxGeometry(w, h, d, 4, radius);
     const col = new THREE.Color(br.color);
     const mat = new THREE.MeshStandardMaterial({
       color: col.clone().multiplyScalar(0.25),
@@ -592,8 +614,9 @@ function buildBrickMeshes() {
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(lx(br.x + br.w / 2), ly(br.y + br.h / 2), d / 2 + 0.5);
+    // crisp neon outline (sharp box, sized just inside the rounded face) keeps bricks readable & separated
     const edge = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geo),
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(w - radius, h - radius, d - radius)),
       new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.9 })
     );
     edge.position.copy(mesh.position);
@@ -1096,15 +1119,21 @@ function render3D() {
   pGeo.attributes.position.needsUpdate = true;
   pGeo.attributes.color.needsUpdate = true;
 
-  // paddle-follow camera (keeps both paddle edges in frame) + screen shake
-  const targetX = lx(pcx) * 0.88;
-  camera.position.x += (targetX - camera.position.x) * 0.12;
+  // paddle-follow camera — gentle & aspect-aware so both bottom corners always stay framed.
+  const aspect    = camera.aspect;
+  const narrow    = Math.max(0, 1 / Math.max(aspect, 0.34) - 1);   // grows as the screen gets more portrait
+  const followAmt = THREE.MathUtils.clamp(aspect * 0.52, 0.30, 0.56);
+  const baseZ     = 158 + narrow * 48;                              // dolly back on tall screens to fit the field width
+  const restY     = 30 + narrow * 9 + Math.sin(performance.now() * 0.0006) * 0.7; // faint idle breathing
+  const targetX   = lx(pcx) * followAmt;
+  camera.position.x += (targetX - camera.position.x) * 0.10;
+  camera.position.z += (baseZ - camera.position.z) * 0.08;
   if (shake > 0.1) {
     camera.position.x += (Math.random() - 0.5) * shake * 0.6;
-    camera.position.y = 30 + (Math.random() - 0.5) * shake * 0.6;
+    camera.position.y = restY + (Math.random() - 0.5) * shake * 0.6;
     shake *= 0.88;
-  } else { camera.position.y += (30 - camera.position.y) * 0.1; shake = 0; }
-  camera.lookAt(camera.position.x, -12, 15);
+  } else { camera.position.y += (restY - camera.position.y) * 0.1; shake = 0; }
+  camera.lookAt(camera.position.x * 0.82, -12, 15);               // view target lags the camera → keeps the field centred
 
   composer.render();
 }
@@ -1203,6 +1232,20 @@ function loop(now) {
 
   if (floorTex) floorTex.offset.y = (floorTex.offset.y - frameTime * 0.00004) % 1;
 
+  if (dust) {
+    const p = dust.geometry.attributes.position.array;
+    for (let i = 0; i < p.length; i += 3) {
+      p[i+2] += frameTime * 0.012;                       // drift toward the camera
+      p[i]   += Math.sin(now * 0.0003 + i) * 0.02;       // faint lateral sway
+      if (p[i+2] > 165) {                                // recycle once past the camera
+        p[i+2] -= 330;
+        p[i]    = (Math.random() - 0.5) * 440;
+        p[i+1]  = (Math.random() - 0.5) * 280 + 20;
+      }
+    }
+    dust.geometry.attributes.position.needsUpdate = true;
+  }
+
   if (running && !paused) {
     accumulator += frameTime;
     let steps = 0;
@@ -1217,8 +1260,10 @@ function loop(now) {
   else {
     // idle menu scene: slow camera drift over an empty tunnel
     idleSpin += frameTime * 0.0002;
+    const narrow = Math.max(0, 1 / Math.max(camera.aspect, 0.34) - 1);
     camera.position.x = Math.sin(idleSpin) * 22;
-    camera.position.y = 30;
+    camera.position.y = 30 + narrow * 9;
+    camera.position.z += (158 + narrow * 48 - camera.position.z) * 0.06;
     camera.lookAt(camera.position.x * 0.4, -12, 15);
     hctx.clearRect(0, 0, W, H);
     composer.render();
