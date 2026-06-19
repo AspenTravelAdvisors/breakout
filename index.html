@@ -582,12 +582,12 @@ const paddleTick = new THREE.Mesh(
 field.add(paddleTick);
 const paddleLight = new THREE.PointLight(0x00f5ff, 22, 130, 2);
 field.add(paddleLight);
-// per-state paddle glow, stepped down one level [ small · normal · wide ]
+// per-state paddle glow, stepped down another level [ small · normal · wide ]
 const PADDLE_TINT       = [0xff5566, 0x7ff2ff, 0x33ff99];
 const PADDLE_ATTEN      = [0xff5566, 0x16d6ff, 0x33ff99];
-const PADDLE_CORE_GLOW  = [0.55, 0.9, 1.4];   // core emissive: normal now sits at the old small level, wide at the old normal
-const PADDLE_SHELL_GLOW = [0.08, 0.12, 0.16];
-const PADDLE_LIGHT      = [11, 15, 21];
+const PADDLE_CORE_GLOW  = [0.34, 0.55, 0.9];   // core emissive: each state dropped one rung lower again
+const PADDLE_SHELL_GLOW = [0.05, 0.08, 0.12];
+const PADDLE_LIGHT      = [8, 11, 15];
 
 /* ---- ball pool ---- */
 const ballGeo = new THREE.SphereGeometry(3.6, 20, 20);
@@ -762,7 +762,7 @@ function initLevel() {
   const { map, extraHp } = buildLayout(level);
   const rows   = map.length;
   const cols   = Math.max(...map.map(r => r.length));
-  const gap    = 3;
+  const gap    = 1;
   const maxW   = LW - 24;
   const size   = Math.min((maxW - (cols - 1) * gap) / cols, 32);
   const gridW  = size * cols + gap * (cols - 1);
