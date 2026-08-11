@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Breakout 3D — Neon Edition</title>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
 :root {
@@ -74,9 +76,12 @@ html, body {
   position: fixed; inset: 0; z-index: 3;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: radial-gradient(circle at 50% 45%, #04122099, #02040af2 70%);
-  transition: opacity 0.35s;
+  visibility: visible;
+  transition: opacity 0.35s, visibility 0s;
 }
-#overlay.hidden { opacity: 0; pointer-events: none; }
+/* visibility flips only after the fade, so a stalled transition can never leave
+   the menu painted over live gameplay */
+#overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.35s, visibility 0s 0.35s; }
 .overlay-title {
   font-family: 'Orbitron', sans-serif; font-weight: 900;
   font-size: clamp(26px, 9vw, 72px); letter-spacing: 8px;
@@ -125,7 +130,7 @@ html, body {
   <div class="overlay-title" id="overlay-title">BREAKOUT 3D</div>
   <div class="overlay-sub" id="overlay-sub">Neon Tunnel Edition · The wall looms ahead<br>Mouse / Arrows steer · Space launch · P pause · M mute</div>
   <button class="start-btn" id="start-btn">LAUNCH</button>
-  <div class="hi-score-line">HI-SCORE <span class="hi-score-val" id="hi-display">0</span></div>
+  <div class="hi-score-line">HI-SCORE <span class="hi-score-val" id="hi-display">0</span> · BEST LEVEL <span class="hi-score-val" id="best-display">1</span></div>
 </div>
 
 <script type="importmap">
@@ -137,14 +142,27 @@ html, body {
 }
 </script>
 
+<!-- The engine streams from a CDN; if that never arrives, say so instead of showing a black void. -->
+<script>
+setTimeout(function () {
+  if (window.__booted) return;
+  var sub = document.getElementById('overlay-sub'), btn = document.getElementById('start-btn');
+  if (sub) sub.innerHTML = 'ENGINE DID NOT LOAD<br>three.js streams from unpkg.com — check the connection, then reload.';
+  if (btn) { btn.textContent = 'RELOAD'; btn.onclick = function () { location.reload(); }; }
+}, 10000);
+</script>
+
 <script type="module">
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+window.__booted = true;
 
 /* ============================================================
    LOGICAL GAME SPACE  (unchanged 2D physics: 480 x 560)
@@ -285,6 +303,14 @@ const SFX = {
     sweep(900,  360, 'triangle', 0.09, 0.035, 0.012, p);
     noise(0.06, 0.025, 1800, 0, p, 0.8, true, 'lowpass');
   },
+  // soft chest-thump detonation — low body, airy tail, no harsh transient
+  boom: (x = LW/2, depth = 1) => {
+    const p = xPan(x);
+    sweep(150 * depth, 44 * depth, 'sine',     0.44, 0.20, 0,     p, true, 0.006);
+    sweep(300 * depth, 96 * depth, 'triangle', 0.26, 0.07, 0.004, p, true, 0.008);
+    noise(0.34, 0.055, 420, 0, p, 0.6, true, 'lowpass');
+    noise(0.13, 0.022, 2600, 0.01, p, 3.0, true, 'bandpass');
+  },
   catch: (x = LW/2) => {
     const p = xPan(x);
     tone(700,  'sine', 0.14, 0.08, 0,    p, true, 0.02);
@@ -331,7 +357,8 @@ const LEVEL_NAMES = [
   'INITIATE','PYRAMID','HEARTBEAT','INVADER','SMILE',
   'STARFALL','PRISM','SKULL','VOLTAGE','FORTRESS',
   'FUNGUS','PHANTOM','FELINE','LIFTOFF','ROYALTY',
-  'SAUCER','ABYSS','LABYRINTH','PAPILLON','OMEGA'
+  'SAUCER','ABYSS','LABYRINTH','PAPILLON','OMEGA',
+  'CASCADE','SUPERNOVA'
 ];
 const LEVEL_MAPS = [
   ['cccccccccc','gggggggggg','yyyyyyyyyy','oooooooooo'],
@@ -343,7 +370,7 @@ const LEVEL_MAPS = [
   ['.....c.....','....ccc....','...ccccc...','..ccccccc..','.ccccccccc.','ccccccccccc','.ccccccccc.','..ccccccc..','...ccccc...','....ccc....','.....c.....'],
   ['..wwwwwww..','.wwwwwwwww.','wwwwwwwwwww','ww..www..ww','ww..www..ww','wwwww.wwwww','.wwwwwwwww.','.w.w.w.w.w.'],
   ['......yyy..','.....yyy...','....yyy....','..yyyyyyy..','....yyy....','...yyy.....','..yyy......','.yyy.......'],
-  ['###########','#ccccccccc#','#cyyyyyyyc#','#cyrrrrryc#','#cyyyyyyyc#','#ccccccccc#','###########'],
+  ['###########','#ccccccccc#','#cyyyyyyyc#','#cyrr*rryc#','#cyyyyyyyc#','#ccccccccc#','###########'],
   ['...rrrrr...','..rrwwwrr..','.rrwwwwwrr.','rrwwrrrwwrr','rrrrrrrrrrr','...wwwww...','...wwwww...','...wwwww...'],
   ['...ppppp...','..ppppppp..','.ppppppppp.','.pwwpppwwp.','.pwwpppwwp.','.ppppppppp.','.ppppppppp.','.p.p.p.p.p.'],
   ['gg.......gg','ggg.....ggg','ggggggggggg','gg.ggggg.gg','ggggggggggg','ggggg.ggggg','ggggggggggg','.ggggggggg.'],
@@ -351,9 +378,13 @@ const LEVEL_MAPS = [
   ['y....y....y','yy..yyy..yy','yyyyyyyyyyy','yyryyyyyryy','yyyyyyyyyyy'],
   ['...ggggg...','..ggggggg..','.ggggggggg.','ccccccccccc','cycycycycyc'],
   ['......ccc..','c...cccccc.','cc.cccccccc','ccccccc.ccc','cc.cccccccc','c...cccccc.','......ccc..'],
-  ['#.#.#.#.#.#','.r.r.r.r.r.','#.#.#.#.#.#','.g.g.g.g.g.','#.#.#.#.#.#','.y.y.y.y.y.','#.#.#.#.#.#'],
+  ['#.#.#.#.#.#','.r.r.r.r.r.','#.#.#.#.#.#','.g.g.*.g.g.','#.#.#.#.#.#','.y.y.y.y.y.','#.#.#.#.#.#'],
   ['pp.......pp','ppp.....ppp','pppp.y.pppp','pppppyppppp','pppp.y.pppp','ppp.....ppp','pp.......pp'],
-  ['###.....###','#rrrrrrrrr#','rr.rrrrr.rr','rrr.rrr.rrr','rrrrrrrrrrr','r.r.r.r.r.r','rrrrrrrrrrr','#rrrrrrrrr#']
+  ['###.....###','#rrrrrrrrr#','rr.rr*rr.rr','rrr.rrr.rrr','rrrrrrrrrrr','r.r.r.r.r.r','rr*rrrrr*rr','#rrrrrrrrr#'],
+  // CASCADE — a linked run across the top (bombs two apart chain), plus two loners at the flanks
+  ['ccccccccccc','cyy*.*.*yyc','ccccccccccc','cyyyyyyyyyc','c*.......*c','cyyyyyyyyyc','ccccccccccc'],
+  // SUPERNOVA — the centre column lights the arms; the outer bombs stay independent
+  ['#....*....#','.pp.....pp.','..p.*.*.p..','...ppppp...','..*.ppp.*..','...ppppp...','..p.*.*.p..','.pp.....pp.','#....*....#']
 ];
 function ballSpeed() { return Math.min(5.028 + level * 0.48, 13.2); }
 function buildLayout(level) {
@@ -364,7 +395,11 @@ function buildLayout(level) {
 
 /* ---------------- game state ---------------- */
 let score, hiScore = 0, lives, level;
-try { hiScore = +localStorage.getItem('bevvip_breakout_hi') || 0; } catch(e) {}
+let bestLevel = 1;
+try {
+  hiScore   = +localStorage.getItem('bevvip_breakout_hi')  || 0;
+  bestLevel = +localStorage.getItem('bevvip_breakout_lvl') || 1;
+} catch(e) {}
 let bricks, balls, paddle, particles, drops, lasers = [], popups = [];
 let running = false, paused = false;
 let mouseX = LW / 2;
@@ -381,8 +416,22 @@ let lvFlash = 0;
 const LIFE_THRESHOLDS = [5000, 15000, 30000, 50000];
 let lifeIdx = 0, extraFlash = 0;
 
+/* impact feel: a few ms of frozen time sells a big hit far better than a bigger explosion */
+let hitStop = 0;
+/* bomb bricks detonate on a short fuse so a chain reads as a cascade, not one lump */
+let bombQueue = [];
+/* screen-space punch fed to the post stack */
+let shockT = 1, shockX = 0.5, shockY = 0.5, shockAmp = 0;
+let flashAmt = 0; const flashCol = new THREE.Color(1, 1, 1);
+
 document.getElementById('hi-display').textContent = hiScore;
-function saveHi() { try { localStorage.setItem('bevvip_breakout_hi', hiScore); } catch(e) {} }
+document.getElementById('best-display').textContent = bestLevel;
+function saveHi() {
+  try {
+    localStorage.setItem('bevvip_breakout_hi', hiScore);
+    localStorage.setItem('bevvip_breakout_lvl', bestLevel);
+  } catch(e) {}
+}
 
 /* ============================================================
    3D SCENE
@@ -395,8 +444,17 @@ const lx = gx => (gx / LW - 0.5) * FW;
 const ly = gy => (0.5 - gy / LH) * FH;
 
 let W = window.innerWidth, H = window.innerHeight;
+
+/* ---------------- adaptive quality ----------------
+   The effects budget sizes itself to the machine: frame cost is sampled every second,
+   stepped down when frames slip and nudged back up when there's headroom, so a laptop
+   GPU and a phone both land somewhere playable. ?q=0|1|2 pins a tier for testing. */
+const _qParam = new URLSearchParams(location.search).get('q');
+const qualityPinned = _qParam !== null && _qParam !== '';
+let quality = qualityPinned ? Math.max(0, Math.min(2, parseInt(_qParam, 10) || 0)) : 2;
+
 const glCanvas = document.getElementById('gl');
-const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(W, H);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -433,6 +491,76 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 0.42, 0.5, 0.76);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+
+/* ---- final grade: lens aberration, film grain, impact shockwave, blast flash ----
+   Runs after OutputPass so it works in display space — fringing and grain stay
+   the tasteful side of subtle instead of blowing out with the HDR bloom. */
+const FinalGrade = {
+  uniforms: {
+    tDiffuse:  { value: null },
+    uTime:     { value: 0 },
+    uAberr:    { value: 0.0011 },
+    uGrain:    { value: 0.035 },
+    uShockT:   { value: 1 },                              // 0→1 ring age; >=1 is idle
+    uShockAmp: { value: 0 },
+    uShockPos: { value: new THREE.Vector2(0.5, 0.5) },
+    uFlash:    { value: 0 },
+    uFlashCol: { value: new THREE.Color(1, 1, 1) },
+    uAspect:   { value: 1 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uTime, uAberr, uGrain, uShockT, uShockAmp, uFlash, uAspect;
+    uniform vec2 uShockPos;
+    uniform vec3 uFlashCol;
+    varying vec2 vUv;
+
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+
+    void main() {
+      vec2 uv = vUv;
+      vec2 c  = uv - 0.5;
+      float r2 = dot(c, c);
+
+      // expanding pressure ring from the last big impact
+      vec2 disp = vec2(0.0);
+      if (uShockT < 1.0 && uShockAmp > 0.0) {
+        vec2 d = (uv - uShockPos) * vec2(uAspect, 1.0);
+        float dist = length(d);
+        float radius = uShockT * 0.85;
+        float band = exp(-pow((dist - radius) / 0.055, 2.0));
+        disp = normalize(d + 1e-6) * band * uShockAmp * (1.0 - uShockT) / vec2(uAspect, 1.0);
+      }
+
+      // radial chromatic aberration — nothing at the centre, a whisper at the corners
+      float ab = uAberr * (0.25 + r2 * 2.6) + length(disp) * 0.35;
+      vec2 dir = normalize(c + 1e-6);
+      vec3 col;
+      col.r = texture2D(tDiffuse, uv + disp + dir * ab).r;
+      col.g = texture2D(tDiffuse, uv + disp).g;
+      col.b = texture2D(tDiffuse, uv + disp - dir * ab).b;
+
+      // fine sensor grain, strongest in the shadows so highlights stay clean
+      float g = hash(uv * vec2(1024.0, 1024.0) + fract(uTime) * 91.7) - 0.5;
+      col += g * uGrain * (1.0 - smoothstep(0.15, 0.9, dot(col, vec3(0.333))));
+
+      // blast light, added and centred on the impact — a full-frame mix would just
+      // tint the starfield and flatten the blacks
+      if (uFlash > 0.0) {
+        vec2 fd = (uv - uShockPos) * vec2(uAspect, 1.0);
+        float fall = exp(-dot(fd, fd) * 4.5);
+        col += uFlashCol * uFlash * (0.06 + 2.6 * fall);
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `
+};
+const fxPass = new ShaderPass(FinalGrade);
+composer.addPass(fxPass);
 
 scene.add(new THREE.AmbientLight(0x3a5a7a, 0.7));
 const dir = new THREE.DirectionalLight(0x88ccff, 0.6);
@@ -591,6 +719,17 @@ const PADDLE_LIGHT      = [8, 11, 15];
 
 /* ---- ball pool ---- */
 const ballGeo = new THREE.SphereGeometry(3.6, 20, 20);
+const TRAIL_N = 16;                 // samples kept per ball (one per physics step)
+const TRAIL_W = 4.6;                // ribbon half-width at the head
+const _trailIndex = (() => {        // shared triangle-strip indices for every ribbon
+  const idx = new Uint16Array((TRAIL_N - 1) * 6);
+  for (let k = 0; k < TRAIL_N - 1; k++) {
+    const a = k * 2, o = k * 6;
+    idx[o] = a; idx[o+1] = a + 1; idx[o+2] = a + 2;
+    idx[o+3] = a + 1; idx[o+4] = a + 3; idx[o+5] = a + 2;
+  }
+  return idx;
+})();
 const ballMeshes = [];
 function ensureBall(i) {
   if (ballMeshes[i]) return ballMeshes[i];
@@ -604,12 +743,17 @@ function ensureBall(i) {
   }));
   halo.scale.set(12, 12, 1);
   m.add(halo);
-  // trail
+  // comet ribbon: a tapered strip reads as speed far better than a one-pixel line
   const tGeo = new THREE.BufferGeometry();
-  tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9 * 3), 3));
-  tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(9 * 3), 3));
-  const tMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-  const trail = new THREE.Line(tGeo, tMat);
+  tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 2 * 3), 3));
+  tGeo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(TRAIL_N * 2 * 3), 3));
+  tGeo.setIndex(new THREE.BufferAttribute(_trailIndex.slice(), 1));
+  const tMat = new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  const trail = new THREE.Mesh(tGeo, tMat);
+  trail.frustumCulled = false;
   field.add(m); field.add(trail);
   return (ballMeshes[i] = { mesh: m, mat, light, trail, halo });
 }
@@ -621,6 +765,8 @@ function clearBricks() {
     field.remove(o.mesh); field.remove(o.edge);
     o.mesh.geometry.dispose(); o.mesh.material.dispose();
     o.edge.geometry.dispose(); o.edge.material.dispose();
+    if (o.core) { field.remove(o.core); o.core.geometry.dispose(); o.core.material.dispose(); }
+    if (o.coreHalo) { field.remove(o.coreHalo); o.coreHalo.material.dispose(); }
   }
   brickObjs.length = 0;
 }
@@ -638,15 +784,35 @@ function buildBrickMeshes() {
       transparent: true, opacity: 1
     });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(lx(br.x + br.w / 2), ly(br.y + br.h / 2), d / 2 + 0.5);
+    const baseZ = d / 2 + 0.5;
+    mesh.position.set(lx(br.x + br.w / 2), ly(br.y + br.h / 2), baseZ);
     // crisp neon outline (sharp box, sized just inside the rounded face) keeps bricks readable & separated
+    const boxGeo = new THREE.BoxGeometry(w - radius, h - radius, d - radius);
     const edge = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(w - radius, h - radius, d - radius)),
+      new THREE.EdgesGeometry(boxGeo),
       new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.9 })
     );
+    boxGeo.dispose();
     edge.position.copy(mesh.position);
     field.add(mesh); field.add(edge);
-    br.obj = { mesh, edge, mat };
+    br.obj = { mesh, edge, mat, baseZ };
+
+    // bomb bricks carry a live core so you can read the threat at a glance
+    if (br.bomb) {
+      const core = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(Math.min(w, h) * 0.24, 1),
+        new THREE.MeshStandardMaterial({ color: 0x2a0800, emissive: 0xffb300, emissiveIntensity: 2.2, roughness: 0.3 })
+      );
+      core.position.set(mesh.position.x, mesh.position.y, baseZ + d / 2 + 0.6);
+      const coreHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTex, color: 0xff7a00, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      }));
+      coreHalo.scale.set(w * 1.5, h * 1.5, 1);
+      coreHalo.position.copy(core.position);
+      field.add(core); field.add(coreHalo);
+      br.obj.core = core; br.obj.coreHalo = coreHalo;
+    }
     brickObjs.push(br.obj);
   }
 }
@@ -703,12 +869,113 @@ const pMat = new THREE.PointsMaterial({ size: 3.4, vertexColors: true, transpare
 const pCloud = new THREE.Points(pGeo, pMat);
 field.add(pCloud);
 
+/* ---- shard debris: bricks come apart into tumbling 3D fragments ----
+   One InstancedMesh, unlit + bloom-fed, so a few hundred fragments cost one draw call. */
+const SHARD_MAX = 280;
+const shardGeo = new THREE.TetrahedronGeometry(1.9);
+const shardMesh = new THREE.InstancedMesh(shardGeo, new THREE.MeshBasicMaterial(), SHARD_MAX);
+shardMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+shardMesh.frustumCulled = false;
+shardMesh.setColorAt(0, new THREE.Color(1, 1, 1));   // allocates the per-instance colour buffer
+shardMesh.count = 0;
+field.add(shardMesh);
+let shards = [];
+const _dummy = new THREE.Object3D();
+const _spawnCol = new THREE.Color();
+
+function shardBudget() { return quality >= 2 ? 1 : quality === 1 ? 0.55 : 0.25; }
+function spawnShards(x, y, color, n, power = 1) {
+  n = Math.round(n * shardBudget());
+  _spawnCol.set(color);
+  const r = _spawnCol.r, g = _spawnCol.g, b = _spawnCol.b;
+  for (let i = 0; i < n && shards.length < SHARD_MAX; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = (1.0 + Math.random() * 2.4) * power;
+    shards.push({
+      x, y, z: 4 + Math.random() * 5,
+      // biased down the ramp so debris tumbles toward the player rather than off into the sky
+      vx: Math.cos(a) * s, vy: Math.sin(a) * s + 0.5,
+      vz: (0.5 + Math.random() * 2.2) * power,
+      rx: Math.random() * 6.28, ry: Math.random() * 6.28, rz: Math.random() * 6.28,
+      sx: (Math.random() - 0.5) * 0.42, sy: (Math.random() - 0.5) * 0.42, sz: (Math.random() - 0.5) * 0.42,
+      size: (0.45 + Math.random() * 0.8) * (0.85 + power * 0.25),
+      life: 1, decay: 0.011 + Math.random() * 0.013,
+      r, g, b
+    });
+  }
+}
+function updateShards() {
+  for (const s of shards) {
+    s.x += s.vx; s.y += s.vy; s.z += s.vz;
+    s.vy += 0.17;                 // pulled down the ramp toward the player
+    s.vz -= 0.15;                 // and back onto the board
+    if (s.z < 1.2 && s.vz < 0) { s.z = 1.2; s.vz *= -0.4; s.vx *= 0.85; s.vy *= 0.85; }
+    s.rx += s.sx; s.ry += s.sy; s.rz += s.sz;
+    s.life -= s.decay;
+  }
+  if (shards.length) shards = shards.filter(s => s.life > 0 && s.y < LH + 90 && s.y > -70);
+}
+
+/* ---- shockwave rings ---- */
+const RING_MAX = 16;
+const ringGeo = new THREE.RingGeometry(0.74, 1.0, 44);
+const ringObjs = [];
+function ensureRing(i) {
+  if (ringObjs[i]) return ringObjs[i];
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 1,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+  });
+  const mesh = new THREE.Mesh(ringGeo, mat);
+  field.add(mesh);
+  return (ringObjs[i] = { mesh, mat });
+}
+let rings = [];
+function ringBurst(x, y, color, maxR = 26, decay = 0.055) {
+  if (quality === 0 && rings.length > 4) return;
+  if (rings.length >= RING_MAX) rings.shift();
+  rings.push({ x, y, color, maxR, t: 0, decay });
+}
+function updateRings() {
+  for (const r of rings) r.t += r.decay;
+  if (rings.length) rings = rings.filter(r => r.t < 1);
+}
+
+/* ---- blast lights: a break briefly lights the tunnel in the brick's own colour ---- */
+const blastLights = [];
+for (let i = 0; i < 2; i++) {
+  const l = new THREE.PointLight(0xffffff, 0, 165, 2);
+  l.position.set(0, 0, 20);
+  field.add(l); blastLights.push(l);
+}
+let blastIdx = 0;
+function blastLight(x, y, color, power) {
+  if (quality === 0) return;
+  const l = blastLights[blastIdx++ % blastLights.length];
+  l.color.set(color);
+  l.intensity = power;
+  l.position.set(lx(x), ly(y), 15);
+}
+
+/* ---- screen-space punch ---- */
+function shockwave(x, y, amp) {
+  const s = toScreen(lx(x), ly(y), 6);
+  shockX = s.x / W; shockY = 1 - s.y / H;
+  shockT = 0; shockAmp = amp;
+}
+function screenFlash(color, amt) { flashCol.set(color); flashAmt = Math.max(flashAmt, amt); }
+
 /* ---- HUD 2D overlay ---- */
 const hud = document.getElementById('hud');
 const hctx = hud.getContext('2d');
 
+function qPixelRatio() {
+  const dpr = window.devicePixelRatio || 1;
+  return quality >= 2 ? Math.min(dpr, 2) : quality === 1 ? Math.min(dpr, 1.5) : 1;
+}
 function onResize() {
   W = window.innerWidth; H = window.innerHeight;
+  renderer.setPixelRatio(qPixelRatio());
   renderer.setSize(W, H);
   composer.setSize(W, H);
   bloom.setSize(W, H);
@@ -719,7 +986,35 @@ function onResize() {
   hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', onResize);
+
+/* Tier 2 is the full show; 1 trims resolution and grain; 0 strips the extra
+   pass entirely so a weak GPU still gets a smooth board. */
+function applyQuality() {
+  renderer.setPixelRatio(qPixelRatio());
+  renderer.setSize(W, H);
+  composer.setSize(W, H);
+  bloom.strength = quality >= 2 ? 0.42 : quality === 1 ? 0.34 : 0.26;
+  fxPass.enabled = quality > 0;
+  fxPass.uniforms.uAberr.value = quality >= 2 ? 0.0011 : 0.0007;
+  fxPass.uniforms.uGrain.value = quality >= 2 ? 0.035 : 0.020;
+  if (dust) dust.visible = quality >= 1;
+  if (quality === 0) for (const l of blastLights) l.intensity = 0;
+}
+
+let qWindow = 0, qFrames = 0, qCooldown = 0;
+function sampleQuality(frameTime) {
+  if (qualityPinned) return;
+  qWindow += frameTime; qFrames++;
+  if (qWindow < 1200) return;
+  const avg = qWindow / qFrames;
+  qWindow = 0; qFrames = 0;
+  if (qCooldown > 0) { qCooldown--; return; }
+  if      (avg > 26 && quality > 0) { quality--; applyQuality(); qCooldown = 3; }
+  else if (avg < 14 && quality < 2) { quality++; applyQuality(); qCooldown = 6; }
+}
+
 onResize();
+applyQuality();
 
 const _v = new THREE.Vector3();
 function toScreen(localX, localY, localZ) {
@@ -742,7 +1037,7 @@ function startGame() {
   puLaser = 0; puLaserLvl = 0; puCatch = 0; puPierce = 0; puShrink = 0; laserCd = 0;
   combo = 0; comboTimer = 0;
   lasers = []; popups = []; shake = 0;
-  paused = false;
+  paused = false; _uiSig = '';
   initLevel();
   running = true;
   lastTime = 0; accumulator = 0;
@@ -758,6 +1053,8 @@ function setPaddleW() {
 
 function initLevel() {
   particles = []; drops = []; lasers = [];
+  shards = []; rings = []; bombQueue = [];
+  hitStop = 0; flashAmt = 0; shockT = 1;
   lvFlash = 100;
   const { map, extraHp } = buildLayout(level);
   const rows   = map.length;
@@ -776,12 +1073,17 @@ function initLevel() {
       const ch = map[r][c];
       if (ch === '.' || ch === ' ') continue;
       const fixed = ch === '#';
-      const color = fixed ? '#445566' : (PX[ch] || '#00f5ff');
-      const hp    = fixed ? 99 : baseHp;
+      const bomb  = ch === '*';
+      const color = fixed ? '#445566' : bomb ? '#ff5a00' : (PX[ch] || '#00f5ff');
+      // bombs stay cheap to pop — their value is the chain, not the grind
+      const hp    = fixed ? 99 : bomb ? Math.min(baseHp, 2) : baseHp;
       bricks.push({
         x: offX + c * (size + gap), y: offY + r * (size + gap),
         w: size, h: size, color, glow: color,
-        hp, maxHp: hp, alive: true, fixed, flash: 0
+        hp, maxHp: hp, alive: true, fixed, bomb, flash: 0,
+        // wall assembles itself on level start: staggered from the centre outward
+        anim: 0, delay: Math.round(r * 2.5 + Math.abs(c - cols / 2) * 1.8),
+        bob: Math.random() * Math.PI * 2, queued: false
       });
     }
   }
@@ -820,9 +1122,17 @@ function launchStuck() {
   return launched;
 }
 
+const elScore = document.getElementById('score-display');
+const elLevelNum = document.getElementById('level-num');
+let _uiSig = '';
 function updateUI() {
-  document.getElementById('score-display').textContent = score;
-  document.getElementById('level-num').textContent     = level;
+  elScore.textContent = score;
+  elLevelNum.textContent = level;
+  // every brick break calls this — only touch the DOM when the pips or pills actually change
+  const sig = lives + '|' + (puWide > 0) + (puSlow > 0) + puMulti + (puLaser > 0) +
+              puLaserLvl + (puCatch > 0) + (puPierce > 0) + (puShrink > 0);
+  if (sig === _uiSig) return;
+  _uiSig = sig;
   const pips = document.getElementById('pips');
   pips.innerHTML = '';
   for (let i = 0; i < Math.min(lives, 10); i++) {
@@ -852,9 +1162,11 @@ function showOverlay(title, sub, btn) {
   document.getElementById('overlay-sub').innerHTML     = sub;
   document.getElementById('start-btn').textContent     = btn;
   document.getElementById('hi-display').textContent    = hiScore;
+  document.getElementById('best-display').textContent  = bestLevel;
   document.getElementById('overlay').classList.remove('hidden');
 }
 function spawnParticles(x, y, color, n = 12) {
+  if (particles.length > 700) n = Math.ceil(n * 0.35);   // keep big chains from flooding the cloud
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 3.5;
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
@@ -889,25 +1201,65 @@ function applyDrop(type) {
   else if (type === 'shrink') { puShrink = 480; puWide = 0; setPaddleW(); SFX.bad(); }
   else if (type === 'life')   { if (lives < 10) { lives++; extraFlash = 90; SFX.extra(); } else addScore(100); SFX.powerup(); }
 }
+// A chain can retire twenty bricks in one step; without a cap the cues stack into mush.
+let breaksThisStep = 0;
+
 function damageBrick(br) {
   br.hp--; br.flash = 1;
-  const cx = br.x + br.w / 2;
+  const cx = br.x + br.w / 2, cy = br.y + br.h / 2;
   if (br.hp <= 0) {
     br.alive = false; combo++; comboTimer = 110;
     const mult = combo >= 5 ? 5 : combo >= 3 ? 3 : combo >= 2 ? 2 : 1;
     const pts  = 10 * level * mult;
     addScore(pts);
-    popups.push({ x: cx, y: br.y, txt: '+' + pts, life: 1, color: br.color });
+    // a chain retires bricks faster than the eye can read separate numbers —
+    // roll nearby popups into one running total instead of stacking them
+    const near = popups.find(p => p.life > 0.5 && Math.abs(p.x - cx) < 85 && Math.abs(p.y - br.y) < 85);
+    if (near) { near.val += pts; near.life = 1; near.color = br.color; }
+    else popups.push({ x: cx, y: br.y, val: pts, life: 1, color: br.color });
     shake = Math.min(shake + 1.6, 6);
-    SFX.break(cx, combo);
-    spawnParticles(cx, br.y + br.h / 2, br.color, 18);
-    if (Math.random() < 0.10) spawnDrop(cx, br.y + br.h / 2);
+    if (breaksThisStep++ < 4) SFX.break(cx, combo);
+    spawnParticles(cx, cy, br.color, 18);
+    spawnShards(cx, cy, br.color, 9);
+    ringBurst(cx, cy, br.color, br.w * SX * 1.6, 0.08);
+    blastLight(cx, cy, br.color, 24);
+    if (combo >= 4) hitStop = Math.min(hitStop + 14, 55);   // the streak gets to land
+    if (Math.random() < 0.10) spawnDrop(cx, cy);
+    if (br.bomb) explodeBomb(br);
     updateUI();
     return true;
   }
-  SFX.hit(cx);
-  spawnParticles(cx, br.y + br.h / 2, br.color, 5);
+  if (breaksThisStep < 6) SFX.hit(cx);
+  spawnParticles(cx, cy, br.color, 5);
   return false;
+}
+
+/* Bomb bricks clear their neighbourhood and light neighbouring bombs on a short fuse,
+   so a well-placed hit unzips the wall in a readable cascade rather than one flat pop. */
+function explodeBomb(br) {
+  const cx = br.x + br.w / 2, cy = br.y + br.h / 2;
+  // ~2.4 cells: reaches two bricks straight out and one diagonally, so bombs
+  // laid two apart light each other and the level maps can compose real chains
+  const R  = br.w * 2.4;
+  SFX.boom(cx);
+  shake   = Math.min(shake + 5.5, 13);
+  hitStop = Math.min(hitStop + 55, 90);
+  spawnShards(cx, cy, '#ff8a1a', 30, 2.1);
+  spawnParticles(cx, cy, '#ffb300', 26);
+  ringBurst(cx, cy, '#ff9a2a', R * SX * 2.3, 0.032);
+  blastLight(cx, cy, 0xff7a00, 58);
+  shockwave(cx, cy, 0.020);
+  screenFlash('#ff8a2a', 0.13);
+  for (const o of bricks) {
+    if (!o.alive || o === br || o.fixed) continue;
+    const dx = (o.x + o.w / 2) - cx, dy = (o.y + o.h / 2) - cy;
+    if (dx * dx + dy * dy > R * R) continue;
+    if (o.bomb) {
+      if (!o.queued) { o.queued = true; bombQueue.push({ br: o, t: 7 + Math.floor(Math.random() * 7) }); }
+    } else {
+      o.hp = 1; damageBrick(o);
+    }
+  }
 }
 
 function update() {
@@ -919,7 +1271,25 @@ function update() {
   if (comboTimer > 0) comboTimer--; else combo = 0;
   if (lvFlash > 0) lvFlash--;
   if (extraFlash > 0) extraFlash--;
-  for (const br of bricks) if (br.flash > 0) br.flash -= 0.07;
+  breaksThisStep = 0;
+  for (const br of bricks) {
+    if (br.flash > 0) br.flash -= 0.07;
+    if (br.anim < 1) { if (br.delay > 0) br.delay--; else br.anim = Math.min(1, br.anim + 0.055); }
+  }
+
+  // queued bombs go off on their fuse, which is what turns a hit into a cascade
+  for (let i = bombQueue.length - 1; i >= 0; i--) {
+    const q = bombQueue[i];
+    if (--q.t > 0) continue;
+    bombQueue.splice(i, 1);
+    if (q.br.alive) { q.br.hp = 1; damageBrick(q.br); }
+  }
+
+  updateShards();
+  updateRings();
+  for (const l of blastLights) l.intensity = l.intensity > 0.05 ? l.intensity * 0.83 : 0;
+  if (shockT < 1)  shockT  = Math.min(1, shockT + 0.042);
+  if (flashAmt > 0) flashAmt = Math.max(0, flashAmt - 0.045);
 
   if (keyL) mouseX = Math.max(0,  mouseX - 11);
   if (keyR) mouseX = Math.min(LW, mouseX + 11);
@@ -963,7 +1333,7 @@ function update() {
       continue;
     }
     b.trail.push({ x: b.x, y: b.y });
-    if (b.trail.length > 8) b.trail.shift();
+    while (b.trail.length > TRAIL_N - 1) b.trail.shift();
     b.x += b.vx * slowMult; b.y += b.vy * slowMult;
     if (b.x - b.r < 0)  { b.x = b.r;      b.vx =  Math.abs(b.vx); SFX.wall(b.x); }
     if (b.x + b.r > LW) { b.x = LW - b.r; b.vx = -Math.abs(b.vx); SFX.wall(b.x); }
@@ -983,6 +1353,7 @@ function update() {
         b.vx = Math.sin(angle) * spd; b.vy = -Math.abs(Math.cos(angle) * spd);
         b.y  = paddle.y - b.r; SFX.paddle(b.x);
         spawnParticles(b.x, paddle.y, '#00f5ff', 6);
+        ringBurst(b.x, paddle.y, '#00f5ff', 20, 0.1);
       }
     }
     for (const br of bricks) {
@@ -1001,6 +1372,12 @@ function update() {
       else damageBrick(br);
       if (!phasing) break;
     }
+    // never let a bounce settle into a near-horizontal grind between the rails
+    const speed = Math.hypot(b.vx, b.vy);
+    if (speed > 0.01 && Math.abs(b.vy) < speed * 0.20) {
+      b.vy = Math.sign(b.vy || -1) * speed * 0.20;
+      b.vx = (Math.sign(b.vx) || 1) * Math.sqrt(Math.max(0, speed * speed - b.vy * b.vy));
+    }
     if (b.y - b.r > LH) balls.splice(bi, 1);
   }
 
@@ -1009,9 +1386,15 @@ function update() {
     puLaser = 0; puLaserLvl = 0; puPierce = 0; lasers = [];
     updateUI();
     if (lives <= 0) {
-      if (score > hiScore) { hiScore = score; saveHi(); }
+      if (score > hiScore) hiScore = score;
+      if (level > bestLevel) bestLevel = level;
+      saveHi();
       SFX.over();
-      showOverlay('GAME OVER', 'Score: ' + score, 'RETRY');
+      shockwave(LW / 2, LH - 30, 0.03);          // centres the flash where the ball was lost
+      screenFlash('#ff006e', 0.28);
+      showOverlay('GAME OVER',
+        'Score: ' + score + ' · Reached level ' + level + ' — ' + LEVEL_NAMES[(level - 1) % LEVEL_NAMES.length],
+        'RETRY');
       running = false; return;
     }
     SFX.life();
@@ -1022,6 +1405,9 @@ function update() {
 
   if (bricks.every(b => !b.alive || b.fixed)) {
     SFX.level(); addScore(level * 100); level++;
+    if (level > bestLevel) { bestLevel = level; saveHi(); }
+    screenFlash('#9ff4ff', 0.30);
+    shockwave(LW / 2, LH / 2, 0.026);
     puWide = 0; puSlow = 0; puMulti = false;
     puLaser = 0; puLaserLvl = 0; puCatch = 0; puPierce = 0; puShrink = 0;
     initLevel(); return;
@@ -1051,6 +1437,20 @@ function update() {
    3D RENDER SYNC
    ============================================================ */
 const _tmpCol = new THREE.Color();
+const _trailPts = new Float32Array(TRAIL_N * 2);
+
+// Post-stack state that both the gameplay and idle-menu render paths need.
+function syncFX() {
+  const u = fxPass.uniforms;
+  u.uTime.value      = performance.now() * 0.001;
+  u.uShockT.value    = shockT;
+  u.uShockAmp.value  = shockAmp;
+  u.uShockPos.value.set(shockX, shockY);
+  u.uFlash.value     = flashAmt;
+  u.uFlashCol.value.copy(flashCol);
+  u.uAspect.value    = camera.aspect;
+}
+
 function render3D() {
   if (!paddle) return;
 
@@ -1070,15 +1470,31 @@ function render3D() {
   paddleLight.intensity           = PADDLE_LIGHT[st];
   paddleMat.attenuationColor.set(PADDLE_ATTEN[st]);
 
-  // bricks
+  // bricks — the wall assembles itself on level start, then breathes; bomb cores pulse
+  const tNow = performance.now();
   for (const br of bricks) {
     const o = br.obj; if (!o) continue;
-    o.mesh.visible = o.edge.visible = br.alive;
-    if (!br.alive) continue;
+    const on = br.alive && br.anim > 0;
+    o.mesh.visible = o.edge.visible = on;
+    if (o.core) o.core.visible = o.coreHalo.visible = on;
+    if (!on) continue;
+    const a = br.anim;
+    // easeOutBack — the brick overshoots and settles, so the wall lands with weight
+    const e = a >= 1 ? 1 : 1 + 2.70158 * Math.pow(a - 1, 3) + 1.70158 * Math.pow(a - 1, 2);
+    const z = o.baseZ + Math.sin(tNow * 0.0016 + br.bob) * 0.8 - (1 - a) * 110;
+    o.mesh.position.z = o.edge.position.z = z;
+    o.mesh.scale.setScalar(e); o.edge.scale.setScalar(e);
     const dim = br.hp < br.maxHp ? 0.45 : 1;
-    o.mat.opacity = dim;
+    o.mat.opacity = dim * a;
     o.mat.emissiveIntensity = 0.9 + (br.flash > 0 ? br.flash * 2.0 : 0);
-    o.edge.material.opacity = 0.4 + 0.55 * dim;
+    o.edge.material.opacity = (0.4 + 0.55 * dim) * a;
+    if (o.core) {
+      const pulse = 0.5 + 0.5 * Math.sin(tNow * 0.006 + br.bob);
+      o.core.position.z = o.coreHalo.position.z = z + 4.6;
+      o.core.material.emissiveIntensity = 1.6 + pulse * 2.6;
+      o.core.scale.setScalar(e * (0.88 + pulse * 0.24));
+      o.coreHalo.material.opacity = (0.30 + pulse * 0.34) * a;
+    }
   }
 
   // balls + trails
@@ -1095,21 +1511,69 @@ function render3D() {
     o.mat.emissive.set(bcol);
     o.light.color.set(bcol);
     o.halo.material.color.set(bcol);
-    // trail
-    const pos = o.trail.geometry.attributes.position.array;
-    const col = o.trail.geometry.attributes.color.array;
-    const tn = b.trail.length;
-    _tmpCol.set(pierce ? 0x00ff88 : 0xffe600);
-    for (let k = 0; k < tn; k++) {
-      const t = b.trail[k];
-      pos[k*3] = lx(t.x); pos[k*3+1] = ly(t.y); pos[k*3+2] = 4.5;
-      const f = (k + 1) / tn * 0.8;
-      col[k*3] = _tmpCol.r * f; col[k*3+1] = _tmpCol.g * f; col[k*3+2] = _tmpCol.b * f;
+
+    // comet ribbon: samples widen and brighten toward the head
+    const tn = b.trail.length + 1;                     // trail samples plus the ball itself
+    if (tn > 1) {
+      for (let k = 0; k < tn; k++) {
+        const s = k < b.trail.length ? b.trail[k] : b;
+        _trailPts[k * 2]     = lx(s.x);
+        _trailPts[k * 2 + 1] = ly(s.y);
+      }
+      const pos = o.trail.geometry.attributes.position.array;
+      const col = o.trail.geometry.attributes.color.array;
+      _tmpCol.set(bcol);
+      for (let k = 0; k < tn; k++) {
+        const px = _trailPts[k * 2], py = _trailPts[k * 2 + 1];
+        const ai = Math.max(0, k - 1), bi2 = Math.min(tn - 1, k + 1);
+        let dx = _trailPts[bi2 * 2] - _trailPts[ai * 2];
+        let dy = _trailPts[bi2 * 2 + 1] - _trailPts[ai * 2 + 1];
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len;           // perpendicular in the field plane
+        const f = (k + 1) / tn;
+        const w = TRAIL_W * f * (0.32 + 0.68 * f);   // pointed tail, full-bodied head
+        const o0 = k * 6, o1 = o0 + 3;
+        pos[o0] = px + nx * w; pos[o0+1] = py + ny * w; pos[o0+2] = 4.5;
+        pos[o1] = px - nx * w; pos[o1+1] = py - ny * w; pos[o1+2] = 4.5;
+        const g = f * f * 0.85;
+        col[o0] = col[o1] = _tmpCol.r * g;
+        col[o0+1] = col[o1+1] = _tmpCol.g * g;
+        col[o0+2] = col[o1+2] = _tmpCol.b * g;
+      }
+      o.trail.geometry.setDrawRange(0, (tn - 1) * 6);
+      o.trail.geometry.attributes.position.needsUpdate = true;
+      o.trail.geometry.attributes.color.needsUpdate = true;
     }
-    o.trail.geometry.setDrawRange(0, tn);
-    o.trail.geometry.attributes.position.needsUpdate = true;
-    o.trail.geometry.attributes.color.needsUpdate = true;
     o.trail.visible = tn > 1;
+  }
+
+  // shard debris — one instanced draw for the whole cloud
+  let sc = 0;
+  for (const s of shards) {
+    _dummy.position.set(lx(s.x), ly(s.y), s.z);
+    _dummy.rotation.set(s.rx, s.ry, s.rz);
+    _dummy.scale.setScalar(s.size * Math.min(1, s.life * 1.7));
+    _dummy.updateMatrix();
+    shardMesh.setMatrixAt(sc, _dummy.matrix);
+    const f = Math.min(1, s.life * 1.5);
+    _tmpCol.setRGB(s.r * f, s.g * f, s.b * f);
+    shardMesh.setColorAt(sc, _tmpCol);
+    sc++;
+  }
+  shardMesh.count = sc;
+  shardMesh.instanceMatrix.needsUpdate = true;
+  if (shardMesh.instanceColor) shardMesh.instanceColor.needsUpdate = true;
+
+  // shockwave rings
+  for (let i = 0; i < ringObjs.length; i++) ringObjs[i].mesh.visible = i < rings.length;
+  for (let i = 0; i < rings.length; i++) {
+    const r = rings[i], o = ensureRing(i);
+    o.mesh.visible = true;
+    const rad = 2 + r.maxR * r.t;
+    o.mesh.position.set(lx(r.x), ly(r.y), 6.5);
+    o.mesh.scale.set(rad, rad, 1);
+    o.mat.color.set(r.color);
+    o.mat.opacity = (1 - r.t) * (1 - r.t) * 0.9;
   }
 
   // drops as rolling cylinders
@@ -1169,6 +1633,7 @@ function render3D() {
   } else { camera.position.y += (restY - camera.position.y) * 0.1; shake = 0; }
   camera.lookAt(camera.position.x * 0.82, lookY, 15);             // view target lags the camera → keeps the field centred
 
+  syncFX();
   composer.render();
 }
 
@@ -1186,9 +1651,10 @@ function drawHUD() {
     hctx.globalAlpha = Math.max(0, Math.min(1, pp.life * 1.4));
     hctx.fillStyle = pp.color;
     hctx.shadowBlur = 10; hctx.shadowColor = pp.color;
-    hctx.font = 'bold 15px Orbitron, monospace';
+    // merged totals get bigger type, so a fat chain reads as a fat number
+    hctx.font = 'bold ' + (pp.val >= 1000 ? 22 : pp.val >= 300 ? 18 : 15) + 'px Orbitron, monospace';
     hctx.textAlign = 'center'; hctx.textBaseline = 'bottom';
-    hctx.fillText(pp.txt, s.x, s.y);
+    hctx.fillText('+' + pp.val, s.x, s.y);
     hctx.restore();
   }
 
@@ -1263,6 +1729,7 @@ function loop(now) {
   let frameTime = now - lastTime;
   lastTime = now;
   if (frameTime > 250) frameTime = 250;
+  sampleQuality(frameTime);
 
   if (floorTex) floorTex.offset.y = (floorTex.offset.y - frameTime * 0.00004) % 1;
 
@@ -1281,13 +1748,19 @@ function loop(now) {
   }
 
   if (running && !paused) {
-    accumulator += frameTime;
-    let steps = 0;
-    while (accumulator >= STEP && steps < 5) {
-      update(); accumulator -= STEP; steps++;
-      if (!running) break;
+    if (hitStop > 0) {
+      // freeze the simulation for a few ms so a big hit reads as impact, not a blur
+      hitStop -= frameTime;
+      accumulator = 0;
+    } else {
+      accumulator += frameTime;
+      let steps = 0;
+      while (accumulator >= STEP && steps < 5) {
+        update(); accumulator -= STEP; steps++;
+        if (!running || hitStop > 0) break;
+      }
+      if (steps >= 5) accumulator = 0;
     }
-    if (steps >= 5) accumulator = 0;
   }
 
   if (running) { render3D(); drawHUD(); }
@@ -1300,6 +1773,8 @@ function loop(now) {
     camera.position.z += (155 + narrow * 26 - camera.position.z) * 0.06;
     camera.lookAt(camera.position.x * 0.4, -12 - narrow * 6, 15);
     hctx.clearRect(0, 0, W, H);
+    if (flashAmt > 0) flashAmt = Math.max(0, flashAmt - frameTime * 0.0018);
+    syncFX();
     composer.render();
   }
 }
@@ -1333,7 +1808,9 @@ document.addEventListener('keydown', e => {
     e.preventDefault(); resumeAC();
     if (!running) startGame();
     else if (paused) togglePause();
-    else if (!launchStuck()) togglePause();
+    // a ball waiting on the paddle means "launch", even during the level intro —
+    // pausing there was never what the player meant
+    else if (!launchStuck() && !balls.some(b => b.stuck)) togglePause();
   }
 });
 document.addEventListener('keyup', e => {
